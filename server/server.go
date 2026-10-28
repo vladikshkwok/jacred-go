@@ -242,6 +242,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1.0/torrents", s.handleTorrents)
 	mux.HandleFunc("/api/v1.0/qualitys", s.handleQualitys)
 	mux.HandleFunc("/api/v2.0/indexers/", s.handleJackett)
+	mux.HandleFunc("/torznab/api", s.handleTorznab)
 	mux.HandleFunc("/stats/trackers", s.handleStatsTrackers)
 	mux.HandleFunc("/stats/trackers/", s.handleStatsTrackers)
 	mux.HandleFunc("/stats/torrents", s.handleStatsTorrentsEx)
@@ -498,6 +499,10 @@ func (s *Server) handleConf(w http.ResponseWriter, r *http.Request) {
 var jackettPathRe = regexp.MustCompile(`(?i)^/api/v2\.0/indexers/[^/]+/results$`)
 
 func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/results/torznab/api") || strings.HasSuffix(r.URL.Path, "/results/torznab") {
+		s.handleTorznab(w, r)
+		return
+	}
 	if !jackettPathRe.MatchString(r.URL.Path) {
 		http.NotFound(w, r)
 		return
@@ -512,7 +517,7 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	categoryRaw := firstCategoryValue(q)
-	query := firstQueryURL(q, "query", "q")
+	query := firstQueryURL(q, "query", "Query", "q")
 	params := filedb.SearchParams{
 		APIKey:        firstQueryURL(q, "apikey", "apiKey"),
 		Query:         query,
@@ -523,24 +528,10 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		CategoryRaw:   categoryRaw,
 		UserAgent:     r.UserAgent(),
 	}
-	res, err := s.DB.JackettSearch(params)
+	res, err := s.searchReleases(params)
 	if err != nil {
 		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "jacred": true, "Results": []any{}})
 		return
-	}
-	// Sonarr, Prowlarr and AIOStreams append the episode to the title in a plain
-	// q=, and a stored name never carries one — SearchName reduces
-	// "The Boys S02E03" to "theboyss02e03", which matches nothing. Retry without
-	// those tokens. Deliberately a fallback rather than a second query merged
-	// into every search: a query that already found something cannot be diluted
-	// or slowed down by it.
-	if len(res.Results) == 0 {
-		if stripped, _, _ := core.StripSeasonEpisode(query); stripped != "" {
-			params.Query = stripped
-			if retry, retryErr := s.DB.JackettSearch(params); retryErr == nil && len(retry.Results) > 0 {
-				res = retry
-			}
-		}
 	}
 	data := writeCanonicalJSONCached(w, http.StatusOK, map[string]any{"Results": s.buildResults(res.Results, res.RqNum), "jacred": true})
 	if data != nil {
