@@ -12,14 +12,15 @@ import (
 var trailingReleaseYear = regexp.MustCompile(`^(.+?)\s+((?:19|20)\d{2})$`)
 
 // searchReleases preserves explicit card fields and genuine numeric titles.
-// Only an unsuccessful free-text lookup retries a title with a trailing year.
+// A trailing year also searches the title/year pair: unrelated raw aliases
+// (for example F1 2025 sports) must not suppress the requested film.
 func (s *Server) searchReleases(p filedb.SearchParams) (filedb.JackettResult, error) {
 	res, err := s.DB.JackettSearch(p)
-	if err != nil || len(res.Results) > 0 || p.Title != "" || p.TitleOriginal != "" {
+	if err != nil || p.Title != "" || p.TitleOriginal != "" {
 		return res, err
 	}
 	query := p.Query
-	if stripped, _, _ := core.StripSeasonEpisode(query); stripped != "" {
+	if stripped, _, _ := core.StripSeasonEpisode(query); len(res.Results) == 0 && stripped != "" {
 		p.Query = stripped
 		res, err = s.DB.JackettSearch(p)
 		if err != nil || len(res.Results) > 0 {
@@ -31,7 +32,22 @@ func (s *Server) searchReleases(p filedb.SearchParams) (filedb.JackettResult, er
 		if m := trailingReleaseYear.FindStringSubmatch(strings.TrimSpace(query)); m != nil {
 			p.Query = strings.TrimSpace(m[1])
 			p.Year, _ = strconv.Atoi(m[2])
-			return s.DB.JackettSearch(p)
+			yearResults, yearErr := s.DB.JackettSearch(p)
+			if yearErr != nil {
+				return res, yearErr
+			}
+			// Keep successful numeric titles, deduplicating aliases by release URL.
+			seen := make(map[string]bool, len(yearResults.Results))
+			for _, row := range yearResults.Results {
+				seen[asString(row["url"])] = true
+			}
+			for _, row := range res.Results {
+				if key := asString(row["url"]); !seen[key] {
+					yearResults.Results = append(yearResults.Results, row)
+					seen[key] = true
+				}
+			}
+			return yearResults, nil
 		}
 	}
 	return res, err

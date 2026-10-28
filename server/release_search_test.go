@@ -96,3 +96,21 @@ func TestTorznabXMLAuthAndPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestRawYearAliasDoesNotHideFilm(t *testing.T) {
+	s := releaseServer(t)
+	key := s.DB.KeyDb("F1 2025", "F1 2025")
+	link := "https://example.test/sport"
+	row := filedb.TorrentDetails{"title": "F1 2025 season", "name": "F1 2025", "originalname": "F1 2025", "types": []string{"sport"}, "url": link, "trackerName": "rutor", "relased": 2025}
+	if err := s.DB.SaveBucket(key, map[string]filedb.TorrentDetails{link: row}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w := releaseCall(s, "/api/v2.0/indexers/all/results?apikey=test-key&Query=F1+2025")
+	var body struct{ Results []map[string]any }
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Results) != 3 {
+		t.Fatalf("raw sports alias suppressed film aliases: %s", w.Body.String())
+	}
+}
