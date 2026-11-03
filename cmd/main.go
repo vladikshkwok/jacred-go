@@ -215,6 +215,19 @@ func main() {
 	// something the process is not doing.
 	sched := background.NewScheduler(file, "http://127.0.0.1:"+strconv.Itoa(cfg.ListenPort),
 		func() bool { return srv.GetConfig().Scheduler })
+	// The scheduler fires jobs at the process's own listener, which gates
+	// /cron behind the dev key (local-only paths) and the API key (the rest)
+	// exactly like a request from the shell would be. Present the same
+	// credentials, read from the live config so a rotation applies.
+	sched.SetAuth(func(req *http.Request) {
+		c := srv.GetConfig()
+		if c.DevKey != "" {
+			req.Header.Set("X-Dev-Key", c.DevKey)
+		}
+		if c.APIKey != "" {
+			req.Header.Set("X-Api-Key", c.APIKey)
+		}
+	})
 	srv.SetScheduler(sched)
 	go sched.Run(ctx)
 

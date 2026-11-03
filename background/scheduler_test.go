@@ -215,6 +215,72 @@ func TestJobFiresOverLoopbackHTTP(t *testing.T) {
 	}
 }
 
+// The listener gates /cron behind the dev and API keys; a scheduler that did
+// not present them would 401 every job in a keyed deployment.
+func TestJobPresentsConfigKeys(t *testing.T) {
+	const wantDev, wantAPI = "dev-key-1", "api-key-1"
+	var gotDev, gotAPI, gotStatus string
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotDev = r.Header.Get("X-Dev-Key")
+		gotAPI = r.Header.Get("X-Api-Key")
+		if r.Header.Get("X-Dev-Key") != wantDev || r.Header.Get("X-Api-Key") != wantAPI {
+			gotStatus = "unauth"
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		gotStatus = "ok"
+		w.Write([]byte(`{"status":"ok"}`))
+		close(done)
+	}))
+	defer srv.Close()
+
+	s := NewScheduler("", srv.URL, nil)
+	s.SetAuth(func(r *http.Request) {
+		r.Header.Set("X-Dev-Key", wantDev)
+		r.Header.Set("X-Api-Key", wantAPI)
+	})
+	j := &job{url: srv.URL + "/cron/rutor/parse", schedule: mustSchedule(t, "* * * * *")}
+	s.jobs = []*job{j}
+	s.tick(t.Context(), time.Now())
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the job never fired")
+	}
+	if gotStatus != "ok" {
+		t.Fatalf("listener saw dev=%q api=%q, rejected the job", gotDev, gotAPI)
+	}
+}
+
+// Without SetAuth the scheduler sends a bare request, as it always did:
+// unkeyed deployments keep working unchanged.
+func TestJobWithoutAuthStaysBare(t *testing.T) {
+	var gotDev, gotAPI string
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotDev, gotAPI = r.Header.Get("X-Dev-Key"), r.Header.Get("X-Api-Key")
+		w.Write([]byte(`{"status":"ok"}`))
+		close(done)
+	}))
+	defer srv.Close()
+
+	s := NewScheduler("", srv.URL, nil)
+	j := &job{url: srv.URL, schedule: mustSchedule(t, "* * * * *")}
+	s.jobs = []*job{j}
+	s.tick(t.Context(), time.Now())
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the job never fired")
+	}
+	if gotDev != "" || gotAPI != "" {
+		t.Errorf("unexpected headers: dev=%q api=%q", gotDev, gotAPI)
+	}
+}
+
 // An edited file is picked up without a restart; an unreadable one leaves the
 // previous jobs alone rather than emptying the schedule.
 func TestReloadPicksUpEditsAndKeepsJobsOnError(t *testing.T) {

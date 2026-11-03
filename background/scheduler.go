@@ -48,11 +48,23 @@ type Scheduler struct {
 	// needing a restart — and the page can report the real state rather than
 	// whatever was true when the process launched.
 	enabled func() bool
+	// auth, when set, decorates every fired request (typically with the API
+	// and dev keys the process's own listener demands, read from the live
+	// config so a key rotation applies to the next fire).
+	auth func(*http.Request)
 
 	mu      sync.Mutex
 	jobs    []*job
 	lastMod time.Time
 	lastSz  int64
+}
+
+// SetAuth decorates each fired request. A deployment whose listener gates
+// /cron behind the dev and API keys would otherwise 401 every scheduled job:
+// the scheduler talks to the same listener a shell curl talks to, so it must
+// present the same credentials.
+func (s *Scheduler) SetAuth(f func(*http.Request)) {
+	s.auth = f
 }
 
 type job struct {
@@ -166,6 +178,9 @@ func (s *Scheduler) fire(ctx context.Context, j *job) {
 	if err != nil {
 		log.Printf("scheduler: %s: %v", url, err)
 		return
+	}
+	if s.auth != nil {
+		s.auth(req)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
