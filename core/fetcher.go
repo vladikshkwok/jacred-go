@@ -57,8 +57,8 @@ var (
 	flareShutdown atomic.Bool
 
 	// Circuit breaker: timestamps of last failed solve per domain. Callers that
-	// retry immediately after a 90s timeout get a fast 503 instead of spawning
-	// another Chrome that almost certainly times out again.
+	// retry immediately after a solve timeout get a fast 503 instead of
+	// spawning another Chrome that almost certainly times out again.
 	flareFailMu   sync.RWMutex
 	flareLastFail = make(map[string]time.Time, 32)
 
@@ -93,6 +93,15 @@ const (
 	// that only needs the page. See flareWaitSeconds.
 	flareSolveWait  = 8
 	flareRenderWait = 2
+	// Maximum duration of one browser solve (flaresolverr MaxTimeout). The
+	// former 90s value was tuned on a desktop machine; on the ARM NAS (two
+	// core quota) a cold CloakBrowser start plus a Turnstile/managed
+	// challenge regularly outlives it, which left every CF-gated login
+	// (rutracker, kinozal, bitru, 1337x) permanently blocked. Five minutes
+	// covers the slowest observed case, and a fast solve still returns as
+	// soon as the challenge clears, so the cap rarely binds. Outer contexts
+	// must exceed it (flareSolveBudget + margin below).
+	flareSolveBudget = 5 * time.Minute
 
 	// A clearance challenged within this window of being issued was never
 	// valid for our client, as opposed to having expired. Generous because the
@@ -1470,10 +1479,9 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 		log.Printf("flaresolverr: solving challenge for %s", domain)
 	}
 
-	// MaxTimeout caps Chrome's solve time inside the library.
-	// Bitru + Turnstile sometimes takes >60s on cold webdriver start; 90s is a
-	// safer margin. Outer ctx must exceed it.
-	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
+	// MaxTimeout caps Chrome's solve time inside the library (see
+	// flareSolveBudget); the outer ctx must exceed it.
+	ctx, cancel := context.WithTimeout(context.Background(), flareSolveBudget+20*time.Second)
 	defer cancel()
 
 	// If the URL that triggered us is a binary attachment (.torrent, /download.php
@@ -1501,7 +1509,7 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:               "request.get",
 		URL:               solveURL,
-		MaxTimeout:        90000,
+		MaxTimeout:        int(flareSolveBudget / time.Millisecond),
 		WaitInSeconds:     flareWaitSeconds(haveClearance),
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
@@ -1631,14 +1639,14 @@ func (f *Fetcher) PostViaBrowser(ctx context.Context, rawURL, postData, cookie s
 	defer flareInflight.Add(-1)
 
 	log.Printf("flaresolverr: submitting a form to %s in the browser", domain)
-	solveCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	solveCtx, cancel := context.WithTimeout(ctx, flareSolveBudget+20*time.Second)
 	defer cancel()
 
 	resp, _ := svc.ControllerV1(solveCtx, &flaresolverr.V1Request{
 		Cmd:               "request.post",
 		URL:               rawURL,
 		PostData:          postData,
-		MaxTimeout:        90000,
+		MaxTimeout:        int(flareSolveBudget / time.Millisecond),
 		WaitInSeconds:     flareSolveWait,
 		Session:           flareSharedSessionID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
@@ -1704,7 +1712,7 @@ func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, us
 
 	log.Printf("flaresolverr: solving login flow for %s", domain)
 	browserID := flareSharedSessionID
-	solveCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	solveCtx, cancel := context.WithTimeout(ctx, flareSolveBudget+20*time.Second)
 	defer cancel()
 
 	// TabsTillVerify hints the library to do extra interactive verification
@@ -1714,7 +1722,7 @@ func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, us
 	resp, _ := svc.ControllerV1(solveCtx, &flaresolverr.V1Request{
 		Cmd:               "request.get",
 		URL:               rawURL,
-		MaxTimeout:        90000,
+		MaxTimeout:        int(flareSolveBudget / time.Millisecond),
 		WaitInSeconds:     12,
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
@@ -1805,14 +1813,14 @@ func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (c
 	browserID := flareSharedSessionID
 	log.Printf("flaresolverr: submitting login POST for %s", domain)
 
-	postCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	postCtx, cancel := context.WithTimeout(ctx, flareSolveBudget+20*time.Second)
 	defer cancel()
 
 	resp, _ := svc.ControllerV1(postCtx, &flaresolverr.V1Request{
 		Cmd:               "request.post",
 		URL:               rawURL,
 		PostData:          postData,
-		MaxTimeout:        90000,
+		MaxTimeout:        int(flareSolveBudget / time.Millisecond),
 		WaitInSeconds:     3,
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
