@@ -503,8 +503,9 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			if err != nil {
 				log.Printf("nnmclub: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
 				p.settle(cycle, cat, task.Page, false)
-				errs++
-				continue
+				// A blocked listing is not an empty page. Stop this pass rather
+				// than burning through every pending page during a CF cooldown.
+				return "", err
 			}
 			processed++
 			if len(items) == 0 {
@@ -576,8 +577,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
 				log.Printf("nnmclub: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
-				errs++
-				continue
+				return "", err
 			}
 			processed++
 			if len(items) == 0 {
@@ -655,7 +655,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
 			p.invalidateCookie()
 		}
-		return nil, nil
+		return nil, fmt.Errorf("nnmclub: listing HTTP %d (cat=%s page=%d)", status, cat, page)
 	}
 	if !strings.Contains(htmlBody, validMarker) {
 		if loginForm {
@@ -664,7 +664,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		} else {
 			log.Printf("nnmclub: cat=%s page=%d marker missing (status=%d body=%d)", cat, page, status, len(htmlBody))
 		}
-		return nil, nil
+		return nil, fmt.Errorf("nnmclub: listing marker missing (cat=%s page=%d)", cat, page)
 	}
 	// nnmclub soft rate-limit: after some number of portal.php hits in a
 	// sliding window, the server serves the "Почему на Портале мне доступно
@@ -693,6 +693,9 @@ func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, err
 	htmlBody := core.DecodeCP1251(data)
 	if status < 200 || status >= 300 {
 		return "", fmt.Errorf("nnmclub status %d", status)
+	}
+	if !strings.Contains(htmlBody, validMarker) {
+		return "", fmt.Errorf("nnmclub: category listing marker missing")
 	}
 	return htmlBody, nil
 }

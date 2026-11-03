@@ -51,6 +51,7 @@ import (
 	"sync"
 
 	"jacred/core"
+	"jacred/cron/publictrackers"
 	"jacred/filedb"
 	"jacred/tracks"
 )
@@ -94,6 +95,7 @@ type Server struct {
 	WWWRoot             string
 	Version             VersionInfo
 	KnabenParser        *knaben.Parser
+	PublicParser        *publictrackers.Parser
 	AnidubParser        *anidub.Parser
 	AnilibertyParser    *aniliberty.Parser
 	AnimelayerParser    *animelayer.Parser
@@ -294,6 +296,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/debug/memstats", handleMemStats)
 	mux.HandleFunc("/debug/freeosmem", handleFreeOSMem)
 	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
+	// Each public source has its own busy guard and bounded recent-page pass.
+	if s.PublicParser == nil {
+		s.PublicParser = publictrackers.New(s.DB)
+	}
+	for _, source := range []string{"piratebay", "1337x"} {
+		mux.HandleFunc("/cron/"+source+"/parse", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			result, err := s.PublicParser.Parse(r.Context(), source, s.GetConfig(), parseOptionalInt(r.URL.Query(), "pages", 1))
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error(), "fetched": result.Fetched, "added": result.Added, "updated": result.Updated, "failed": result.Failed})
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
+		})
+	}
 	mux.HandleFunc("/stats/parsers", s.handleStatsParsers)
 	mux.HandleFunc("/stats/refresh", s.handleStatsRefresh)
 	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)

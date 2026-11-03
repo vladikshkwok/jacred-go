@@ -284,7 +284,7 @@ func TestSettingsListsEveryConfigurableTracker(t *testing.T) {
 		t.Fatal("settings.html no longer declares a TRACKERS list")
 	}
 	listed := map[string]bool{}
-	for _, q := range regexp.MustCompile(`'([A-Za-z]+)'`).FindAllStringSubmatch(m[1], -1) {
+	for _, q := range regexp.MustCompile(`'([A-Za-z][A-Za-z0-9]*)'`).FindAllStringSubmatch(m[1], -1) {
 		listed[q[1]] = true
 	}
 

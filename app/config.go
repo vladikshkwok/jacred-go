@@ -265,6 +265,10 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Aniliberty
 	case "Knaben":
 		return &cfg.Knaben
+	case "PirateBay":
+		return &cfg.PirateBay
+	case "X1337":
+		return &cfg.X1337
 	case "Anistar":
 		return &cfg.Anistar
 	case "Anifilm":

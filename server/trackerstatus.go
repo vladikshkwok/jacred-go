@@ -272,7 +272,7 @@ type TrackerState struct {
 var trackerNames = []string{
 	"anibelka", "anidub", "anifilm", "aniliberty", "animelayer", "anistar",
 	"bitru", "bitruapi", "kinozal", "knaben", "korsars", "leproduction",
-	"lostfilm", "mazepa", "megapeer", "nnmclub", "rudub", "rutor", "rutracker",
+	"lostfilm", "mazepa", "megapeer", "nnmclub", "piratebay", "1337x", "rudub", "rutor", "rutracker",
 	"selezen", "subsplease", "toloka", "torrentby", "ultradox", "viruseproject",
 }
 
@@ -298,6 +298,10 @@ func trackerSettings(cfg app.Config, name string) app.TrackerSettings {
 		return cfg.Kinozal
 	case "knaben":
 		return cfg.Knaben
+	case "piratebay":
+		return cfg.PirateBay
+	case "1337x":
+		return cfg.X1337
 	case "korsars":
 		return cfg.Korsars
 	case "leproduction":

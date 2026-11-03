@@ -113,6 +113,8 @@ type Config struct {
 	Anidub              TrackerSettings      `json:"Anidub"`
 	Aniliberty          TrackerSettings      `json:"Aniliberty"`
 	Knaben              TrackerSettings      `json:"Knaben"`
+	PirateBay           TrackerSettings      `json:"PirateBay"`
+	X1337               TrackerSettings      `json:"X1337"`
 	Anistar             TrackerSettings      `json:"Anistar"`
 	Anifilm             TrackerSettings      `json:"Anifilm"`
 	Leproduction        TrackerSettings      `json:"Leproduction"`
@@ -169,6 +171,8 @@ func DefaultConfig() Config {
 		Anidub:              TrackerSettings{Host: "https://tr.anidub.com", ReqMinute: 8, ParseDelay: 7000},
 		Aniliberty:          TrackerSettings{Host: "https://aniliberty.top", ReqMinute: 8, ParseDelay: 7000},
 		Knaben:              TrackerSettings{Host: "https://api.knaben.org", ReqMinute: 8, ParseDelay: 7000},
+		PirateBay:           TrackerSettings{Host: "https://apibay.org", ReqMinute: 8, ParseDelay: 7000},
+		X1337:               TrackerSettings{Host: "https://1337x.to", ReqMinute: 8, ParseDelay: 7000},
 		Anistar:             TrackerSettings{Host: "https://anistar.org", ReqMinute: 8, ParseDelay: 7000},
 		Anifilm:             TrackerSettings{Host: "https://anifilm.pro", ReqMinute: 8, ParseDelay: 7000},
 		Leproduction:        TrackerSettings{Host: "https://www.le-production.tv", ReqMinute: 8, ParseDelay: 7000},
