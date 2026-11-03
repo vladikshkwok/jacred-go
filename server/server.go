@@ -507,7 +507,9 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	cacheKey := cacheKeyFor("jackett", r.URL.RawQuery)
+	// RqNum clients have different query interpretation and omit metadata.
+	// Their cached response must never replace a Lampa response (or vice versa).
+	cacheKey := cacheKeyFor("jackett", r.UserAgent()+"\x00"+r.URL.RawQuery)
 	if cached, ok := s.cache.Get(cacheKey); ok {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-Cache", "HIT")

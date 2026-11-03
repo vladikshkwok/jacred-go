@@ -145,9 +145,10 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 	}
 	m.Log("Начало анализа треков для "+infohash+".", &typetask)
 
-	analyzeCtx, cancelAnalyze := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancelAnalyze()
-	res, err := m.Analyzer.Analyze(analyzeCtx, magnet)
+	res, err := m.Analyzer.Analyze(ctx, magnet)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if torrentKey == "" {
 		torrentKey = m.FileDB.FindTorrentKeyByMagnet(magnet)
 	}
@@ -172,13 +173,25 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 	return nil
 }
 
-func (m *Manager) CollectCandidates(typetask int, now time.Time) []Candidate {
+func (m *Manager) CollectCandidates(ctx context.Context, typetask int, now time.Time) []Candidate {
 	type sortable struct {
 		c          Candidate
 		updateTime time.Time
 	}
 	tmp := make([]sortable, 0)
-	for _, item := range m.FileDB.OrderedMasterEntries() {
+	// The master index already tells us which buckets can contain recent
+	// releases/updates. Opening every historical shard used to take most of
+	// the nightly collection window before the first probe could start.
+	entries := m.FileDB.OrderedMasterEntries()
+	cutoff := candidateCutoff(typetask, now)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if ctx.Err() != nil {
+			break
+		}
+		item := entries[i]
+		if !cutoff.IsZero() && !item.Value.UpdateTime.IsZero() && item.Value.UpdateTime.Before(cutoff) {
+			continue
+		}
 		bucket, err := m.FileDB.OpenRead(item.Key)
 		if err != nil {
 			continue
@@ -196,6 +209,9 @@ func (m *Manager) CollectCandidates(typetask int, now time.Time) []Candidate {
 				continue
 			}
 			if toInt(t["ffprobe_tryingdata"]) >= m.Config.TracksAttempt {
+				continue
+			}
+			if _, ok := m.TracksDB.GetByMagnet(magnet, nil, true); ok {
 				continue
 			}
 			if typetask == 1 || typetask == 2 || toInt(t["sid"]) > 0 {
@@ -219,6 +235,17 @@ func (m *Manager) CollectCandidates(typetask int, now time.Time) []Candidate {
 		torrents[i] = tmp[i].c
 	}
 	return torrents
+}
+
+func candidateCutoff(typetask int, now time.Time) time.Time {
+	switch typetask {
+	case 1:
+		return now.UTC().Add(-24 * time.Hour)
+	case 2, 5:
+		return now.UTC().AddDate(0, -1, 0)
+	default:
+		return time.Time{}
+	}
 }
 
 func includeByTask(t filedb.TorrentDetails, typetask int, now time.Time) bool {
@@ -256,7 +283,10 @@ func (m *Manager) ProcessOnce(ctx context.Context, typetask int, now time.Time) 
 	task := typetask
 	m.Log(fmt.Sprintf("start typetask=%d", typetask), &task)
 	startTime := time.Now()
-	candidates := m.CollectCandidates(typetask, now)
+	candidates := m.CollectCandidates(ctx, typetask, now)
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	m.Log(fmt.Sprintf("typetask=%d collected %d torrents to process", typetask, len(candidates)), &task)
 	processed := 0
 	for _, c := range candidates {
@@ -292,17 +322,15 @@ func (m *Manager) RunLoop(ctx context.Context, typetask int) {
 		return
 	case <-time.After(20 * time.Second):
 	}
-	firstRun := typetask == 1
+	// Every enabled queue must run after startup. Waiting Task0 (six hours
+	// at home) first starved tasks 2/5 in the five-hour collection window.
+	firstRun := true
 	for {
 		if !firstRun {
-			minutes := m.Config.TracksInterval.Task0 + typetask
-			if typetask == 1 {
-				minutes = m.Config.TracksInterval.Task1
-			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Duration(minutes) * time.Minute):
+			case <-time.After(m.taskInterval(typetask)):
 			}
 		}
 		firstRun = false
@@ -314,6 +342,14 @@ func (m *Manager) RunLoop(ctx context.Context, typetask int) {
 		}
 		_, _ = m.ProcessOnce(ctx, typetask, time.Now())
 	}
+}
+
+func (m *Manager) taskInterval(typetask int) time.Duration {
+	minutes := m.Config.TracksInterval.Task0 + typetask
+	if typetask == 1 {
+		minutes = m.Config.TracksInterval.Task1
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 func toString(v any) string {

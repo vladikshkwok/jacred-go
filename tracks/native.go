@@ -91,6 +91,10 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	// Waiting behind another queue is not a failed probe. Start the probe
+	// deadline only once this torrent owns the shared analyzer.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
 	spec, err := torrent.TorrentSpecFromMagnetUri(strings.TrimSpace(magnet))
 	if err != nil {
 		return nil, fmt.Errorf("parse magnet: %w", err)
